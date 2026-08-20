@@ -1,0 +1,29 @@
+{
+  "cue_path": "D:\\PS1RECOMP\\Einhaender (USA).cue",
+  "cue_name": "Einhaender (USA).cue",
+  "bin_name": "Einhaender (USA).bin",
+  "track_count": 1,
+  "data_track_size": 653493792,
+  "data_track_md5": "a3aa50b173f19c6d2da6ae2e970b827f",
+  "data_track_sha1": "461fcb0edb27637c720bf3734af576856bb2137a",
+  "boot_exe": "SCUS_942.43",
+  "serial": "SCUS-94243",
+  "serial_exe": "SCUS_942.43",
+  "volume_id": "",
+  "display_name": "Einhander",
+  "load_address": "0x80010000",
+  "entry_pc": "0x800155FC",
+  "text_size": "0x00022000",
+  "stack_base": "0x801FFFF0",
+  "require_cue": true,
+  "required_disc_fp": "65393df4ff611265cd99737df47f6af7c8f6798a1826d805cc31c54c1e8cb637",
+  "seed_count": 176,
+  "warnings": [
+    "cue has only 1 TRACK \u2014 Track-01-only dumps fail multi-track netplay/catalog gates; prefer a full Redump cue."
+  ],
+  "notes": [
+    "entry_pc/load_address/text_size/stack_base taken from PS-X EXE header.",
+    "seeds are first-pass boot-EXE JAL targets (+ entry); expect to grow as overlays / runtime paths are discovered.",
+    "required_disc_fp is psxrecomp-toc-v1 (matches runtime DiscIdentity)."
+  ]
+}
