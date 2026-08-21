@@ -1,9 +1,20 @@
-warning: in the working copy of 'src/common/backends/imgui/launcher_imgui.cpp', LF will be replaced by CRLF the next time Git touches it
 diff --git a/src/common/backends/imgui/launcher_imgui.cpp b/src/common/backends/imgui/launcher_imgui.cpp
-index 554a730..f064475 100644
+index 554a730..8088d62 100644
 --- a/src/common/backends/imgui/launcher_imgui.cpp
 +++ b/src/common/backends/imgui/launcher_imgui.cpp
-@@ -2490,6 +2490,24 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+@@ -1152,7 +1152,10 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
+     }
+     ImGui::Dummy(ImVec2(0, px(12)));
+     char change_label[32];
+-    snprintf(change_label, sizeof(change_label), "Change %s", noun);
++    if (std::strcmp(noun, "Disc") == 0)
++        snprintf(change_label, sizeof(change_label), "Open *.cue");
++    else
++        snprintf(change_label, sizeof(change_label), "Change %s", noun);
+     if (ImGui::Button(change_label, ImVec2(availw, px(34)))) {
+         // Native file dialog filter comes from the active console's
+         // SystemProfile.rom_filter — never a hardcoded per-system set. Every
+@@ -2490,6 +2493,24 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
          }
      }
  
@@ -28,4 +39,3 @@ index 554a730..f064475 100644
      // Universal fullscreen row (every console — no longer gated on the
      // vestigial has_fullscreen_toggle). Tri-state cycle replaces the old
      // binary checkbox so Exclusive mode is reachable again.
-

@@ -53,7 +53,7 @@ possible.
 
 1. Place your legally dumped `BIN` and `CUE` files somewhere on your computer.
 2. Start `Einhander_Recompiled.exe`.
-3. Use **Change Disc** in the launcher and select the `CUE` file.
+3. Use **Open *.cue** in the launcher and select the `CUE` file.
 4. Configure the keyboard or controller if needed, then select **Play**.
 
 The launcher remembers the selected disc path locally. Disc images, memory
