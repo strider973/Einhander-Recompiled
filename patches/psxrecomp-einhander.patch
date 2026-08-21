@@ -1,0 +1,455 @@
+warning: in the working copy of 'runtime/include/cpu_state.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'runtime/include/psx_cycles.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'runtime/runtime.cmake', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'runtime/src/gpu.c', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'runtime/src/gpu_sw_renderer.c', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'runtime/src/gte.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'runtime/src/main.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tools/debug_client.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/runtime/runtime.cmake b/runtime/runtime.cmake
+index 5946a3a..d0158a3 100644
+--- a/runtime/runtime.cmake
++++ b/runtime/runtime.cmake
+@@ -1780,8 +1780,10 @@ function(psxrecomp_add_game_runtime target)
+     endif()
+ 
+     set(_psxg_extras ${PSXG_CODEGEN_SETUP_SOURCES})
+-    list(APPEND _psxg_extras
+-        "${PSXRECOMP_ROOT}/host/psxrecomp_codegen_host.c")
++    if(RECOMP_UI_ROOT)
++        list(APPEND _psxg_extras
++            "${PSXRECOMP_ROOT}/host/psxrecomp_codegen_host.c")
++    endif()
+ 
+     set(_psxg_rt_args
+         GAME_VERSION "${PSX_GAME_VERSION}"
+diff --git a/runtime/src/gpu.c b/runtime/src/gpu.c
+index c4b80f1..562e49a 100644
+--- a/runtime/src/gpu.c
++++ b/runtime/src/gpu.c
+@@ -59,6 +59,12 @@ static int      gp0_words_needed;
+ static uint32_t gp0_next_source_addr = 0xFFFFFFFFu;
+ static uint32_t gp0_cmd_source_addr  = 0xFFFFFFFFu;
+ static uint16_t gp0_ot_rank = 0xFFFFu;
++#define GP0_RAW_HISTORY_CAP 32
++static uint32_t gp0_raw_history_word[GP0_RAW_HISTORY_CAP];
++static uint32_t gp0_raw_history_addr[GP0_RAW_HISTORY_CAP];
++static uint32_t gp0_raw_history_head;
++static FILE *gp0_raw_trace;
++static uint32_t gp0_raw_trace_pending;
+ 
+ /* ---- Widescreen proportion correction --------------------------------------
+  * Active only when [video] aspect_ratio != 4:3 AND the game's [widescreen]
+@@ -2531,6 +2537,9 @@ static void gpu_reset_state(int clear_vram) {
+     memset(gp0_cmd_buf, 0, sizeof(gp0_cmd_buf));
+     gp0_next_source_addr = 0xFFFFFFFFu;
+     gp0_cmd_source_addr = 0xFFFFFFFFu;
++    memset(gp0_raw_history_word, 0, sizeof(gp0_raw_history_word));
++    memset(gp0_raw_history_addr, 0xFF, sizeof(gp0_raw_history_addr));
++    gp0_raw_history_head = 0;
+     polyline_color = 0;
+     polyline_prev_x = polyline_prev_y = 0;
+     polyline_prev_c = 0;
+@@ -2602,6 +2611,14 @@ static void gpu_reset_state(int clear_vram) {
+ 
+ void gpu_init(void) {
+     gpu_reset_state(1);
++    if (!gp0_raw_trace) {
++        const char *trace_path = getenv("PSX_GP0_TRACE");
++        if (trace_path && trace_path[0]) {
++            gp0_raw_trace = fopen(trace_path, "wb");
++            if (gp0_raw_trace)
++                fprintf(stderr, "[GP0-RAW] continuous trace -> %s\n", trace_path);
++        }
++    }
+ }
+ 
+ /* ---- GPUSTAT read (0x1F801814) ---- */
+@@ -3637,6 +3654,12 @@ static void set_tpage_from_poly(uint16_t tpage_word) {
+  * semi_trans: whether the primitive has semi-transparency enabled (from opcode bit)
+  * raw_texture: 1 if this is a raw-texture opcode (bit 0 of GP0 opcode set) */
+ static void setup_textured_draw(uint32_t color24, int semi_trans, int raw_texture) {
++    static int force_raw = -1;
++    if (force_raw < 0) {
++        const char *e = getenv("PSX_FORCE_RAW_TEXTURE");
++        force_raw = (e && e[0] && e[0] != '0') ? 1 : 0;
++    }
++    if (force_raw) raw_texture = 1;
+     uint32_t r = (color24 >> 0) & 0xFF;
+     uint32_t g = (color24 >> 8) & 0xFF;
+     uint32_t b = (color24 >> 16) & 0xFF;
+@@ -5095,6 +5118,20 @@ uint16_t gpu_vram_peek(int x, int y) {
+ 
+ static void gpu_write_gp0_body(uint32_t val) {
+     gp0_write_count++;
++    gp0_raw_history_word[gp0_raw_history_head] = val;
++    gp0_raw_history_addr[gp0_raw_history_head] = gp0_next_source_addr;
++    gp0_raw_history_head = (gp0_raw_history_head + 1u) % GP0_RAW_HISTORY_CAP;
++    if (gp0_raw_trace) {
++        const uint32_t rec[4] = {
++            (uint32_t)s_frame_count, gp0_next_source_addr, val,
++            g_debug_last_store_pc
++        };
++        fwrite(rec, sizeof(rec), 1, gp0_raw_trace);
++        if (++gp0_raw_trace_pending >= 4096u) {
++            fflush(gp0_raw_trace);
++            gp0_raw_trace_pending = 0;
++        }
++    }
+ 
+     /* State: consuming pixel data for CPU→VRAM transfer */
+     if (gp0_state == GP0_VRAM_WRITE) {
+@@ -5174,17 +5211,15 @@ static void gpu_write_gp0_body(uint32_t val) {
+ 
+     /* State: shaded polyline — alternating color, vertex words */
+     if (gp0_state == GP0_POLYLINE_SHADED) {
+-        /* The terminator can arrive in either the color or vertex position.
+-         * Check it before interpreting the alternating shaded-polyline stream;
+-         * otherwise a vertex-position terminator is consumed as coordinates and
+-         * de-phases all following GP0 commands. */
+-        if ((val & 0xF000F000u) == 0x50005000u) {
+-            gp0_state = GP0_IDLE;
+-            return;
+-        }
+         /* Even words (after cmd) are colors, odd words are vertices.
+          * Sequence: [cmd+C0] [V0] [C1] [V1] [C2] [V2] ...
+-         * polyline_has_prev tracks: 0=need V0, 1=need C_next, 2=need V_next */
++         * polyline_has_prev tracks: 0=need V0, 1=need C_next, 2=need V_next.
++         *
++         * For a shaded polyline, the sentinel follows the last vertex and is
++         * therefore encountered where the next colour would be. Einhander also
++         * stores a valid colour word 0x55C45434: it matches the hardware's
++         * loose nibble mask but is not the sentinel. Accept the canonical
++         * 0x55555555 here so that colour is not mistaken for end-of-command. */
+         if (!polyline_has_prev) {
+             /* First vertex */
+             int32_t x, y;
+@@ -5197,6 +5232,10 @@ static void gpu_write_gp0_body(uint32_t val) {
+         }
+         if (polyline_has_prev == 1) {
+             /* Expecting color word. */
++            if (val == 0x55555555u) {
++                gp0_state = GP0_IDLE;
++                return;
++            }
+             polyline_color = rgb888_to_rgb555(val & 0xFFFFFFu);
+             polyline_has_prev = 2;
+             return;
+@@ -5232,9 +5271,19 @@ static void gpu_write_gp0_body(uint32_t val) {
+ 
+     if (word_count == 0) {
+         /* Unknown command — fatal halt with rings queryable post-mortem */
+-        static char reason[96];
++        static char reason[192];
+         snprintf(reason, sizeof(reason),
+-                 "GPU GP0 unknown command 0x%02X (word 0x%08X)", opcode, val);
++                 "GPU GP0 unknown command 0x%02X (word 0x%08X, source 0x%08X, cmd_source 0x%08X)",
++                 opcode, val, gp0_next_source_addr, gp0_cmd_source_addr);
++        fprintf(stderr, "\n[GP0-RAW] fatal: %s\n", reason);
++        fprintf(stderr, "[GP0-RAW] last %u words (oldest to newest):\n",
++                (unsigned)GP0_RAW_HISTORY_CAP);
++        for (uint32_t i = 0; i < GP0_RAW_HISTORY_CAP; i++) {
++            uint32_t idx = (gp0_raw_history_head + i) % GP0_RAW_HISTORY_CAP;
++            fprintf(stderr, "  %02u addr=%08X word=%08X\n", (unsigned)i,
++                    gp0_raw_history_addr[idx], gp0_raw_history_word[idx]);
++        }
++        fflush(stderr);
+         psx_fatal_halt(reason);
+     }
+ 
+diff --git a/runtime/src/gpu_sw_renderer.c b/runtime/src/gpu_sw_renderer.c
+index ff40ace..db1fb71 100644
+--- a/runtime/src/gpu_sw_renderer.c
++++ b/runtime/src/gpu_sw_renderer.c
+@@ -1046,9 +1046,14 @@ void sw_draw_textured_triangle(int x0, int y0, int u0, int v0,
+ }
+ 
+ static inline void color24_to_mod(uint32_t color, int *r, int *g, int *b) {
+-    *r = (int)((color >> 0) & 0xFF) >> 3;
+-    *g = (int)((color >> 8) & 0xFF) >> 3;
+-    *b = (int)((color >> 16) & 0xFF) >> 3;
++    /* Keep Gouraud modulation in the same 0..255 domain as flat textured
++     * polygons. put_textured() performs the PS1 (texel * colour) >> 4
++     * conversion from a 5-bit texel and an 8-bit modulation colour. Reducing
++     * this to 5 bits here applies that reduction twice and makes shaded
++     * textured geometry (notably Einhander's bosses) up to 8x too dark. */
++    *r = (int)((color >> 0) & 0xFF);
++    *g = (int)((color >> 8) & 0xFF);
++    *b = (int)((color >> 16) & 0xFF);
+ }
+ 
+ static void raster_shaded_textured_triangle(const RTarget *t,
+@@ -1168,9 +1173,9 @@ static void raster_shaded_textured_triangle(const RTarget *t,
+             int mr = (int)(ra + (rb - ra) * t_val);
+             int mg = (int)(ga + (gb - ga) * t_val);
+             int mb = (int)(ba + (bb - ba) * t_val);
+-            if (mr < 0) mr = 0; if (mr > 31) mr = 31;
+-            if (mg < 0) mg = 0; if (mg > 31) mg = 31;
+-            if (mb < 0) mb = 0; if (mb > 31) mb = 31;
++            if (mr < 0) mr = 0; if (mr > 255) mr = 255;
++            if (mg < 0) mg = 0; if (mg > 255) mg = 255;
++            if (mb < 0) mb = 0; if (mb > 255) mb = 255;
+ 
+             if (g_texture_filter) {
+                 float sh = bilinear_center_shift_for_target(t);
+diff --git a/runtime/src/gte.cpp b/runtime/src/gte.cpp
+index 4ef7357..f6fa042 100644
+--- a/runtime/src/gte.cpp
++++ b/runtime/src/gte.cpp
+@@ -81,15 +81,16 @@ static inline int  gte_instr_sf(uint32_t instr) { return (instr & (1u << 19)) ?
+ // Transform a vertex by Light matrix → IR1/IR2/IR3 (step 1 of lighting)
+ static void light_transform(GTEState* gte, int16_t* V, uint32_t instr) {
+     const bool lm = gte_instr_lm(instr);
++    const int shift = gte_instr_sf(instr);
+     int64_t mac1 = ((int64_t)gte->L[0][0] * V[0] +
+                     (int64_t)gte->L[0][1] * V[1] +
+-                    (int64_t)gte->L[0][2] * V[2]) >> 12;
++                    (int64_t)gte->L[0][2] * V[2]) >> shift;
+     int64_t mac2 = ((int64_t)gte->L[1][0] * V[0] +
+                     (int64_t)gte->L[1][1] * V[1] +
+-                    (int64_t)gte->L[1][2] * V[2]) >> 12;
++                    (int64_t)gte->L[1][2] * V[2]) >> shift;
+     int64_t mac3 = ((int64_t)gte->L[2][0] * V[0] +
+                     (int64_t)gte->L[2][1] * V[1] +
+-                    (int64_t)gte->L[2][2] * V[2]) >> 12;
++                    (int64_t)gte->L[2][2] * V[2]) >> shift;
+     gte->MAC1 = static_cast<int32_t>(mac1);
+     gte->MAC2 = static_cast<int32_t>(mac2);
+     gte->MAC3 = static_cast<int32_t>(mac3);
+@@ -101,6 +102,7 @@ static void light_transform(GTEState* gte, int16_t* V, uint32_t instr) {
+ // Apply light color matrix + background color to IR → IR (step 2 of lighting)
+ static void light_color(GTEState* gte, uint32_t instr) {
+     const bool lm = gte_instr_lm(instr);
++    const int shift = gte_instr_sf(instr);
+     int64_t mac1 = (int64_t)gte->BK[0] * 4096 +
+                    (int64_t)gte->LC[0][0] * gte->IR1 +
+                    (int64_t)gte->LC[0][1] * gte->IR2 +
+@@ -113,9 +115,9 @@ static void light_color(GTEState* gte, uint32_t instr) {
+                    (int64_t)gte->LC[2][0] * gte->IR1 +
+                    (int64_t)gte->LC[2][1] * gte->IR2 +
+                    (int64_t)gte->LC[2][2] * gte->IR3;
+-    gte->MAC1 = static_cast<int32_t>(mac1 >> 12);
+-    gte->MAC2 = static_cast<int32_t>(mac2 >> 12);
+-    gte->MAC3 = static_cast<int32_t>(mac3 >> 12);
++    gte->MAC1 = static_cast<int32_t>(mac1 >> shift);
++    gte->MAC2 = static_cast<int32_t>(mac2 >> shift);
++    gte->MAC3 = static_cast<int32_t>(mac3 >> shift);
+     gte->IR1 = gte->saturate_ir(gte->MAC1, 1, lm);
+     gte->IR2 = gte->saturate_ir(gte->MAC2, 2, lm);
+     gte->IR3 = gte->saturate_ir(gte->MAC3, 3, lm);
+@@ -124,15 +126,16 @@ static void light_color(GTEState* gte, uint32_t instr) {
+ // Multiply IR by RGBC color and push to RGB FIFO (step 3 of color output)
+ static void color_output(GTEState* gte, uint32_t instr) {
+     const bool lm = gte_instr_lm(instr);
++    const int shift = gte_instr_sf(instr);
+     uint8_t r0 = (gte->RGBC >> 0)  & 0xFF;
+     uint8_t g0 = (gte->RGBC >> 8)  & 0xFF;
+     uint8_t b0 = (gte->RGBC >> 16) & 0xFF;
+     int64_t mac1 = (int64_t)r0 * gte->IR1 * 16;
+     int64_t mac2 = (int64_t)g0 * gte->IR2 * 16;
+     int64_t mac3 = (int64_t)b0 * gte->IR3 * 16;
+-    gte->MAC1 = static_cast<int32_t>(mac1 >> 12);
+-    gte->MAC2 = static_cast<int32_t>(mac2 >> 12);
+-    gte->MAC3 = static_cast<int32_t>(mac3 >> 12);
++    gte->MAC1 = static_cast<int32_t>(mac1 >> shift);
++    gte->MAC2 = static_cast<int32_t>(mac2 >> shift);
++    gte->MAC3 = static_cast<int32_t>(mac3 >> shift);
+     gte->IR1 = gte->saturate_ir(gte->MAC1, 1, lm);
+     gte->IR2 = gte->saturate_ir(gte->MAC2, 2, lm);
+     gte->IR3 = gte->saturate_ir(gte->MAC3, 3, lm);
+@@ -174,6 +177,23 @@ static void depth_cue_from_ir(GTEState* gte, uint32_t instr) {
+     gte->IR3 = gte->saturate_ir(gte->MAC3, 3, lm);
+ }
+ 
++static void depth_cue_from_mac(GTEState* gte, uint32_t instr,
++                               int64_t base1, int64_t base2, int64_t base3) {
++    const int shift = gte_instr_sf(instr);
++    const bool lm = gte_instr_lm(instr);
++    int16_t step1 = gte->saturate_ir(static_cast<int32_t>(((int64_t)gte->FC[0] * 4096 - base1) >> shift), 1, false);
++    int16_t step2 = gte->saturate_ir(static_cast<int32_t>(((int64_t)gte->FC[1] * 4096 - base2) >> shift), 2, false);
++    int16_t step3 = gte->saturate_ir(static_cast<int32_t>(((int64_t)gte->FC[2] * 4096 - base3) >> shift), 3, false);
++    int64_t mac1 = (base1 + (int64_t)gte->IR0 * step1) >> shift;
++    int64_t mac2 = (base2 + (int64_t)gte->IR0 * step2) >> shift;
++    int64_t mac3 = (base3 + (int64_t)gte->IR0 * step3) >> shift;
++    gte->check_mac_overflow(mac1, 1); gte->check_mac_overflow(mac2, 2); gte->check_mac_overflow(mac3, 3);
++    gte->MAC1 = static_cast<int32_t>(mac1); gte->MAC2 = static_cast<int32_t>(mac2); gte->MAC3 = static_cast<int32_t>(mac3);
++    gte->IR1 = gte->saturate_ir(gte->MAC1, 1, lm);
++    gte->IR2 = gte->saturate_ir(gte->MAC2, 2, lm);
++    gte->IR3 = gte->saturate_ir(gte->MAC3, 3, lm);
++}
++
+ // ---------------------------------------------------------------------------
+ // Widescreen X-squash (verified-enhancement, default off = identity).
+ //
+@@ -944,6 +964,12 @@ void gte_nclip(GTEState* gte, uint32_t instr) {
+     int64_t mac0 = (int64_t)sx0 * (sy1 - sy2) +
+                    (int64_t)sx1 * (sy2 - sy0) +
+                    (int64_t)sx2 * (sy0 - sy1);
++    static int invert_nclip = -1;
++    if (invert_nclip < 0) {
++        const char *e = getenv("PSX_INVERT_NCLIP");
++        invert_nclip = (e && e[0] && e[0] != '0') ? 1 : 0;
++    }
++    if (invert_nclip) mac0 = -mac0;
+     gte->check_mac0_overflow(mac0);
+     gte->MAC0 = static_cast<int32_t>(mac0);
+     gte->set_error_flag();
+@@ -1015,8 +1041,9 @@ void gte_ncct(GTEState* gte, uint32_t instr) {
+ void gte_ncds_internal(GTEState* gte, int16_t* V, uint32_t instr) {
+     light_transform(gte, V, instr);
+     light_color(gte, instr);
+-    depth_cue_from_ir(gte, instr);
+-    color_output(gte, instr);
++    const uint8_t r = (gte->RGBC >> 0) & 0xFF, g = (gte->RGBC >> 8) & 0xFF, b = (gte->RGBC >> 16) & 0xFF;
++    depth_cue_from_mac(gte, instr, (int64_t)r * gte->IR1 * 16, (int64_t)g * gte->IR2 * 16, (int64_t)b * gte->IR3 * 16);
++    gte->push_rgb(gte->saturate_color(gte->MAC1 >> 4, 0), gte->saturate_color(gte->MAC2 >> 4, 1), gte->saturate_color(gte->MAC3 >> 4, 2));
+ }
+ 
+ void gte_ncds(GTEState* gte, uint32_t instr) {
+@@ -1118,14 +1145,7 @@ void gte_dpcl(GTEState* gte, uint32_t instr) {
+     uint8_t r = (gte->RGBC >> 0)  & 0xFF;
+     uint8_t g = (gte->RGBC >> 8)  & 0xFF;
+     uint8_t b = (gte->RGBC >> 16) & 0xFF;
+-    gte->MAC1 = (r * gte->IR1) >> 8;
+-    gte->MAC2 = (g * gte->IR2) >> 8;
+-    gte->MAC3 = (b * gte->IR3) >> 8;
+-    gte->IR1 = gte->saturate_ir(gte->MAC1, 1, gte_instr_lm(instr));
+-    gte->IR2 = gte->saturate_ir(gte->MAC2, 2, gte_instr_lm(instr));
+-    gte->IR3 = gte->saturate_ir(gte->MAC3, 3, gte_instr_lm(instr));
+-    // Depth cue toward far color
+-    depth_cue_from_ir(gte, instr);
++    depth_cue_from_mac(gte, instr, (int64_t)r * gte->IR1 * 16, (int64_t)g * gte->IR2 * 16, (int64_t)b * gte->IR3 * 16);
+     gte->push_rgb(
+         gte->saturate_color(gte->MAC1 >> 4, 0),
+         gte->saturate_color(gte->MAC2 >> 4, 1),
+@@ -1153,8 +1173,9 @@ void gte_cdp(GTEState* gte, uint32_t instr) {
+     gte->FLAG = 0;
+     // IR1/IR2/IR3 already set (from previous NCS or similar)
+     light_color(gte, instr);
+-    depth_cue_from_ir(gte, instr);
+-    color_output(gte, instr);
++    const uint8_t r = (gte->RGBC >> 0) & 0xFF, g = (gte->RGBC >> 8) & 0xFF, b = (gte->RGBC >> 16) & 0xFF;
++    depth_cue_from_mac(gte, instr, (int64_t)r * gte->IR1 * 16, (int64_t)g * gte->IR2 * 16, (int64_t)b * gte->IR3 * 16);
++    gte->push_rgb(gte->saturate_color(gte->MAC1 >> 4, 0), gte->saturate_color(gte->MAC2 >> 4, 1), gte->saturate_color(gte->MAC3 >> 4, 2));
+     gte->set_error_flag();
+ }
+ 
+@@ -2069,9 +2090,12 @@ extern "C" void gte_write_ctrl(CPUState* cpu, uint8_t reg, uint32_t val) {
+     if (reg >= 32) return;
+     gte_cpu_canonicalize_backing(cpu);
+     switch (reg) {
++        /* RT33, L33, LR33, H, DQA, ZSF3 and ZSF4 are written as signed
++         * 16-bit values by the real GTE.  Zero-extending RT33/L33/LR33 made
++         * negative third-axis matrix coefficients positive; Einhander's
++         * dynamically loaded boss/level code relies on those coefficients,
++         * producing black or apparently missing faces after the transition. */
+         case 4: case 12: case 20: case 26:
+-            cpu->gte_ctrl[reg] = val & 0xFFFFu;
+-            break;
+         case 27: case 29: case 30:
+             cpu->gte_ctrl[reg] = gte_sign_extend_16(val);
+             break;
+diff --git a/runtime/src/main.cpp b/runtime/src/main.cpp
+index 9a8215c..2838dee 100644
+--- a/runtime/src/main.cpp
++++ b/runtime/src/main.cpp
+@@ -10237,8 +10237,6 @@ namespace {
+         int resume_netplay_room)
+     {
+         if (!gi) return;
+-        (void)ws_offered_b;
+-        (void)ws_ultrawide_offered_b;
+         launcher_profile_apply("psx", gi);
+         gi->name = game_name_c;
+         gi->region = region_c;
+@@ -10248,9 +10246,9 @@ namespace {
+             g_rui_config_ini_path.empty() ? nullptr : g_rui_config_ini_path.c_str();
+         gi->has_expected_crc = 0;
+         gi->num_known_sha256 = 0;
+-        /* PSX display-view controls are owned by trusted mods. Do not expose
+-         * the generic Display -> View mode launcher row. */
+-        gi->widescreen_supported = 0;
++        /* Expose the Display -> Aspect ratio row only for titles which opt in
++         * through their [widescreen] game configuration. */
++        gi->widescreen_supported = ws_offered_b ? 1 : 0;
+         gi->num_players = game_players_n;
+         gi->msu1_supported = 0;
+         gi->sram_path = nullptr;
+@@ -10258,7 +10256,9 @@ namespace {
+         gi->pad_mode_selectable = ctrl_lock_mode_b ? 0 : 1;
+         gi->locked_pad_mode = locked_pad_mode_i;
+         gi->lock_device = ctrl_lock_device_b ? 1 : 0;
+-        gi->aspect_mask = 0;
++        gi->aspect_mask = 0x1 |
++            (ws_offered_b ? 0x2 : 0) |
++            (ws_ultrawide_offered_b ? 0x4 : 0);
+         gi->renderer_labels = kPsxRendererLabels;
+         gi->num_renderers = vulkan_offered_b ? 3 : 2;
+         gi->settings_bindings = 1;
+@@ -10315,7 +10315,7 @@ int main(int argc, char** argv) {
+ 
+     /* Setup-host zip-root exe: after Generate & rebuild, hand off to the
+      * product binary under build-release/ (bios/, mods/, assets/, settings). */
+-#if defined(PSX_HAS_GAME_CODEGEN)
++#if defined(RECOMP_LAUNCHER) && defined(PSX_HAS_GAME_CODEGEN)
+     psx_game_codegen_forward_if_built(argc, argv);
+ #endif
+ 
+@@ -10493,12 +10493,10 @@ int main(int argc, char** argv) {
+     }
+     bool ctrl_lock_mode    = false; /* game.toml [controller] lock_mode; true hides the whole pad-mode selector */
+     bool ctrl_lock_device  = false; /* game.toml [controller] lock_device; true hides the Player controller cards entirely */
+-    /* Widescreen/View mode and Skip FMVs are mod-owned on PSX. Their legacy
+-     * game.toml offer flags remain parseable for old projects but deliberately
+-     * cannot expose generic launcher controls or activate the features. Trusted
+-     * activation plugins apply them after launcher/settings resolution. */
+-    constexpr bool ws_offered = false;
+-    constexpr bool ws_ultrawide_offered = false;
++    /* Widescreen is per-game opt-in. Titles which have not validated it keep
++     * the launcher row hidden and are clamped to the original 4:3 display. */
++    bool ws_offered = false;
++    bool ws_ultrawide_offered = false;
+     constexpr bool frame_interpolation_offered = false;
+     constexpr bool skip_fmv_offered = false;
+     /* Load acceleration is likewise mod-owned (Fast Loading / CD Speed). The
+@@ -10557,6 +10555,8 @@ int main(int argc, char** argv) {
+             game_id   = gc.id;
+             game_region = gc.region;
+             game_players = gc.players;
++            ws_offered = gc.ws_offered;
++            ws_ultrawide_offered = gc.ws_offered && gc.ws_ultrawide_offered;
+             /* CTR ND intro: an older workaround (PSX_ND_SIB_FLAP_LAST=1) skipped
+              * wide additive 0x36 in OT ranks 1600..2099 to unmask sibling flaps.
+              * After the AVSZ3 MAC0 fix (unshifted product → correct MAC0>>17 OT
+diff --git a/tools/debug_client.py b/tools/debug_client.py
+index b6d264c..57342e5 100644
+--- a/tools/debug_client.py
++++ b/tools/debug_client.py
+@@ -227,6 +227,26 @@ def build_cmd(args):
+         return {"cmd": "geom_correction"}, pretty_json
+     elif cmd == "overlay":
+         return {"cmd": "overlay_state"}, pretty_json
++    elif cmd == "gte_state":
++        return {"cmd": "gte_state"}, pretty_json
++    elif cmd == "gte_ring_dump":
++        count = int(args[1]) if len(args) > 1 else 64
++        return {"cmd": "gte_ring_dump", "count": count, "newest": 1}, pretty_json
++    elif cmd == "gte_frame_stats":
++        frames = int(args[1]) if len(args) > 1 else 120
++        return {"cmd": "gte_frame_stats", "frames": frames}, pretty_json
++    elif cmd == "gte_latch_dump":
++        count = int(args[1]) if len(args) > 1 else 64
++        return {"cmd": "gte_latch_dump", "count": count}, pretty_json
++    elif cmd == "gte_intpl_dump":
++        count = int(args[1]) if len(args) > 1 else 64
++        return {"cmd": "gte_intpl_dump", "count": count, "newest": 1}, pretty_json
++    elif cmd == "capture_quads":
++        return {"cmd": "capture_quads"}, pretty_json
++    elif cmd == "get_quads":
++        return {"cmd": "get_quads"}, pretty_json
++    elif cmd == "gpu_frame_dump":
++        return {"cmd": "gpu_frame_dump", "frame": int(args[1])}, pretty_json
+     elif cmd == "watch":
+         if len(args) < 2:
+             return None, lambda _: "Usage: watch <addr>"
+

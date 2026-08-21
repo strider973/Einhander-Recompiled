@@ -1,0 +1,81 @@
+# Scaffold .gitignore for a PSXRecomp game repository (New Project Layout).
+# Aligned with docs/ci/templates/game.gitignore.
+
+# Build outputs
+/build/
+/build-*/
+/out/
+/.happypath/
+
+# Setup-host: players Generate game C locally (CI clears generated/).
+/generated/
+
+# Release packaging
+/release-stage/
+/dist/
+*.zip
+
+# Local PlayStation assets (never commit dumps / BIOS)
+/bios/
+/isos/
+/saves/
+/prepared_disc/
+/disc/
+/launcher_assets/img/boxart.tga
+/toolchain/.psxrecomp-bin
+.settings/
+
+# Disc / image / memcard formats
+*.bin
+*.cue
+*.iso
+*.img
+*.sub
+*.ccd
+*.mcd
+*.mcr
+*.chd
+*.car
+SCPH*.BIN
+
+# Local path/config stubs
+bios.cfg
+disc.cfg
+rom.cfg
+settings.toml
+
+# Ghidra / local analysis
+/ghidra/projects/
+*.gpr
+*.rep/
+*.lock
+*.lock~
+
+# Editor / cache
+.vs/
+.vscode/
+*.user
+*.log
+.DS_Store
+__pycache__/
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# Runtime artifacts from psx-runtime launches
+psx_crash.txt
+psx_last_run_report.json
+psx_screenshot.bmp
+psx_freeze_heartbeat.json
+starvation_dump.jsonl
+*_stdout.txt
+*_stderr.txt
+gp0_trace*.bin
+diag_*.json
+
+# Diagnostic dumps (root-level) — keep catalog / probe trackable
+/*.json
+/*.bmp
+/*.png
+!/catalog_identity.json
+!/disc_probe.json

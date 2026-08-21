@@ -1,0 +1,31 @@
+warning: in the working copy of 'src/common/backends/imgui/launcher_imgui.cpp', LF will be replaced by CRLF the next time Git touches it
+diff --git a/src/common/backends/imgui/launcher_imgui.cpp b/src/common/backends/imgui/launcher_imgui.cpp
+index 554a730..f064475 100644
+--- a/src/common/backends/imgui/launcher_imgui.cpp
++++ b/src/common/backends/imgui/launcher_imgui.cpp
+@@ -2490,6 +2490,24 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+         }
+     }
+ 
++    /* Per-game aspect selector. A non-zero aspect_mask means the host supplied
++     * an explicit list (4:3 / 16:9 / 21:9); titles which did not opt in keep
++     * this row completely hidden. */
++    if (m->aspect_mask != 0) {
++        row_label(m->aspect_setting_label && m->aspect_setting_label[0]
++                      ? m->aspect_setting_label
++                      : "Aspect ratio",
++                  th);
++        ImGui::PushID("aspect_ratio");
++        if (ImGui::Button(launcher_model_aspect_label(m),
++                          ImVec2(px(150), px(30))))
++            launcher_model_cycle_aspect(m);
++        ImGui::PopID();
++        if (m->aspect_setting_help && m->aspect_setting_help[0] &&
++            ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
++            ImGui::SetTooltip("%s", m->aspect_setting_help);
++    }
++
+     // Universal fullscreen row (every console — no longer gated on the
+     // vestigial has_fullscreen_toggle). Tri-state cycle replaces the old
+     // binary checkbox so Exclusive mode is reachable again.
+

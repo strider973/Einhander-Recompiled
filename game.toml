@@ -1,0 +1,55 @@
+# Autofilled by tools/new_project_layout/probe_disc.py from your legal dump.
+# Review before shipping. Runtime quirks / overlay seeds still need hand work.
+
+[game]
+name = "Einhander"
+id = "SCUS-94243"
+players = 1
+exe = "disc/SCUS_942.43"
+disc = "disc/Einhaender (USA).cue"
+load_address = "0x80010000"
+entry_pc = "0x800155FC"
+text_size = "0x00022000"
+stack_base = "0x801FFFF0"
+
+# Digests are for data Track 01 (first BINARY FILE / TRACK 01).
+[prepare_disc]
+out_dir = "disc"
+bin_name = "Einhaender (USA).bin"
+cue_name = "Einhaender (USA).cue"
+boot_exe = "SCUS_942.43"
+known_sizes = [653493792]
+known_md5 = [
+  "a3aa50b173f19c6d2da6ae2e970b827f",
+]
+known_sha1 = [
+  "461fcb0edb27637c720bf3734af576856bb2137a",
+]
+
+[recompiler]
+seeds = "seeds/ghidra_funcs.txt"
+out_dir = "generated"
+strict = true
+
+[runtime]
+window_title = "Einhander Recompiled"
+memcard_dir = "saves"
+overlay_cache = true
+
+[video]
+renderer = "opengl"
+aspect_ratio = "4:3"
+
+[widescreen]
+offer = false
+offer_ultrawide = false
+
+[controller]
+default_mode = "digital"
+
+# Online mount gate: digests + track count + optional TOC fingerprint
+# (see docs/NETPLAY.md).
+[netplay]
+require_cue = true
+required_tracks = 1
+required_disc_fp = "65393df4ff611265cd99737df47f6af7c8f6798a1826d805cc31c54c1e8cb637"
