@@ -35,6 +35,7 @@ strict = true
 window_title = "Einhander Recompiled"
 memcard_dir = "saves"
 overlay_cache = true
+overlay_backend = "gcc"
 
 [video]
 renderer = "opengl"
@@ -53,3 +54,8 @@ default_mode = "digital"
 require_cue = true
 required_tracks = 1
 required_disc_fp = "65393df4ff611265cd99737df47f6af7c8f6798a1826d805cc31c54c1e8cb637"
+[audio]
+# Low-latency profile: 30 ms bridge target + ~5.8 ms host callback at 44.1 kHz.
+# Canonical SPU output is the fidelity reference for this first public port.
+buffer_ms = 30
+spu_hq = false

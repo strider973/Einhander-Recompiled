@@ -1,11 +1,35 @@
-warning: in the working copy of 'runtime/include/cpu_state.h', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'runtime/include/psx_cycles.h', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'runtime/runtime.cmake', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'runtime/src/gpu.c', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'runtime/src/gpu_sw_renderer.c', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'runtime/src/gte.cpp', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'runtime/src/main.cpp', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'tools/debug_client.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/runtime/include/cpu_state.h b/runtime/include/cpu_state.h
+index 5d1713b..d2682ec 100644
+--- a/runtime/include/cpu_state.h
++++ b/runtime/include/cpu_state.h
+@@ -74,6 +74,11 @@ typedef struct CPUState {
+  * Static recompiled code and the interpreter share host cycle state directly,
+  * so their barrier compiles to nothing. */
+ #ifdef PSX_OVERLAY_DLL_BUILD
++#ifdef _WIN32
++__declspec(dllexport)
++#else
++__attribute__((visibility("default")))
++#endif
+ void overlay_flush_cycles(void);
+ static inline void psx_store_cycle_barrier(void) { overlay_flush_cycles(); }
+ #else
+diff --git a/runtime/include/psx_cycles.h b/runtime/include/psx_cycles.h
+index cc95430..5bdb6a5 100644
+--- a/runtime/include/psx_cycles.h
++++ b/runtime/include/psx_cycles.h
+@@ -126,6 +126,11 @@ static inline void psx_advance_cycles(uint32_t cycles) {
+ /* Publish deferred charges (IRQ edge / MMIO / savestate). Overlay DLLs keep
+  * their pending total in the callback shim rather than these host globals. */
+ #if defined(PSX_OVERLAY_DLL_BUILD)
++#ifdef _WIN32
++__declspec(dllexport)
++#else
++__attribute__((visibility("default")))
++#endif
+ void overlay_flush_cycles(void);
+ static inline void psx_cyc_local_publish(void) { }
+ static inline void psx_cyc_batch_flush(void) { overlay_flush_cycles(); }
 diff --git a/runtime/runtime.cmake b/runtime/runtime.cmake
 index 5946a3a..d0158a3 100644
 --- a/runtime/runtime.cmake
@@ -23,6 +47,126 @@ index 5946a3a..d0158a3 100644
  
      set(_psxg_rt_args
          GAME_VERSION "${PSX_GAME_VERSION}"
+diff --git a/runtime/src/cdrom.c b/runtime/src/cdrom.c
+index 22a7d57..103ee11 100644
+--- a/runtime/src/cdrom.c
++++ b/runtime/src/cdrom.c
+@@ -245,6 +245,11 @@ typedef struct CDROMSectorDelivery {
+ 
+ static int32_t xa_hist_l[2];
+ static int32_t xa_hist_r[2];
++/* Persistent PS1 XA 25-tap resampler state.  Hardware carries it across CD
++ * sectors; resetting interpolation per sector creates an audible seam. */
++static int16_t xa_resamp_buf[2][64];
++static uint8_t xa_resamp_pos;
++static uint8_t xa_resamp_phase;
+ static uint8_t xa_stream_file;
+ static uint8_t xa_stream_channel;
+ static uint8_t xa_stream_coding;
+@@ -1095,6 +1100,9 @@ static int16_t clamp16_cd(int32_t v) {
+ static void xa_reset_decode(void) {
+     xa_hist_l[0] = xa_hist_l[1] = 0;
+     xa_hist_r[0] = xa_hist_r[1] = 0;
++    memset(xa_resamp_buf, 0, sizeof(xa_resamp_buf));
++    xa_resamp_pos = 0;
++    xa_resamp_phase = 0;
+     xa_stream_file = 0xFF;
+     xa_stream_channel = 0xFF;
+     xa_stream_coding = 0xFF;
+@@ -1212,27 +1220,41 @@ static int xa_decode_sector_4bit_mono(const uint8_t* data, int16_t* out) {
+ static int xa_resample_to_44100(const int16_t* in, int in_frames,
+                                 int sample_rate, int16_t* out, int max_frames) {
+     if (!in || !out || in_frames <= 0 || sample_rate <= 0 || max_frames <= 0) return 0;
++    static const int16_t impulse[7][25] = {
++        { 0,-5,17,-35,70,-23,-68,347,-839,2062,-4681,15367,21472,-5882,2810,-1352,635,-235,26,43,-35,16,-8,2,0 },
++        { 0,-2,10,-34,65,-84,52,9,-266,1024,-2680,9036,26516,-6016,3021,-1571,848,-365,107,10,-16,17,-8,3,-1 },
++        { -2,0,3,-19,60,-75,162,-227,306,-67,-615,3229,29883,-4532,2488,-1471,882,-424,166,-27,5,6,-8,3,-1 },
++        { -1,3,-2,-5,31,-74,179,-402,689,-926,1272,-1446,31033,-1446,1272,-926,689,-402,179,-74,31,-5,-2,3,-1 },
++        { -1,3,-8,6,5,-27,166,-424,882,-1471,2488,-4532,29883,3229,-615,-67,306,-227,162,-75,60,-19,3,0,-2 },
++        { -1,3,-8,17,-16,10,107,-365,848,-1571,3021,-6016,26516,9036,-2680,1024,-266,9,52,-84,65,-34,10,-2,0 },
++        { 0,2,-8,16,-35,43,26,-235,635,-1352,2810,-5882,21472,15367,-4681,2062,-839,347,-68,-23,70,-35,17,-5,0 }
++    };
++    const unsigned freq = sample_rate == 18900 ? 3u : 6u;
+     int out_frames = 0;
+     int in_pos = 0;
+-    int phase = 0;
+ 
+     while (in_pos < in_frames && out_frames < max_frames) {
+-        int next_pos = (in_pos + 1 < in_frames) ? in_pos + 1 : in_pos;
+-        int32_t cur_l = in[in_pos * 2 + 0];
+-        int32_t cur_r = in[in_pos * 2 + 1];
+-        int32_t next_l = in[next_pos * 2 + 0];
+-        int32_t next_r = in[next_pos * 2 + 1];
+-        out[out_frames * 2 + 0] = (int16_t)(cur_l + ((next_l - cur_l) * phase) / 44100);
+-        out[out_frames * 2 + 1] = (int16_t)(cur_r + ((next_r - cur_r) * phase) / 44100);
++        for (unsigned ch = 0; ch < 2; ch++) {
++            const int16_t *wf = &xa_resamp_buf[ch][(xa_resamp_pos + 32u - 25u) & 31u];
++            int32_t acc = 0;
++            for (unsigned tap = 0; tap < 25; tap++)
++                acc += (int32_t)impulse[xa_resamp_phase][tap] * (int32_t)wf[tap];
++            out[out_frames * 2 + ch] = clamp16_cd(acc >> 15);
++        }
+         out_frames++;
+ 
+-        phase += sample_rate;
+-        while (phase >= 44100) {
+-            phase -= 44100;
++        xa_resamp_phase = (uint8_t)(xa_resamp_phase + freq);
++        if (xa_resamp_phase >= 7u) {
++            xa_resamp_phase = (uint8_t)(xa_resamp_phase - 7u);
++            for (unsigned ch = 0; ch < 2; ch++) {
++                int16_t sample = in[in_pos * 2 + ch];
++                xa_resamp_buf[ch][xa_resamp_pos] = sample;
++                xa_resamp_buf[ch][xa_resamp_pos + 32u] = sample;
++            }
++            xa_resamp_pos = (uint8_t)((xa_resamp_pos + 1u) & 31u);
+             in_pos++;
+         }
+     }
+-
+     return out_frames;
+ }
+ 
+@@ -1288,6 +1310,13 @@ static int maybe_deliver_xa_audio(const uint8_t* raw_data, int lba,
+         xa_stream_file != file ||
+         xa_stream_channel != channel ||
+         xa_stream_coding != coding) {
++        /* A title may chain STR scenes through menus/demo/story without a
++         * Pause/Stop command.  Resetting only the XA predictor here left PCM
++         * from the previous file/channel queued on the SPU CD input, so the
++         * next FMV started with stale audio and remained out of sync.  A real
++         * stream identity change is a discontinuity: discard that old PCM
++         * together with the decoder history. */
++        spu_cd_audio_reset();
+         xa_reset_decode();
+         xa_stream_file = file;
+         xa_stream_channel = channel;
+@@ -1454,7 +1483,12 @@ static void start_read_stream(uint8_t cmd) {
+     /* Drive-state change cancels any pended notification (Beetle clears
+      * AIP on Play/Read/Pause/Stop/Seek alike). */
+     cdrom_clear_pending_dataready();
+-    if (mode_reg & 0x40u) {
++    /* A new ReadN/ReadS is also a new XA playback epoch when an earlier XA
++     * stream was active.  Einhander loops the SAME intro STR after title/demo/
++     * story, so file/channel/coding comparison cannot detect the restart; if
++     * SetMode has temporarily dropped the XA bit, the old conditional missed
++     * it as well.  Reset both predictor and queued PCM at the Read boundary. */
++    if (xa_stream_active || (mode_reg & 0x40u)) {
+         xa_reset_decode();
+         spu_cd_audio_reset();
+     }
+@@ -1965,8 +1999,11 @@ static void exec_command(uint8_t cmd) {
+ 
+     case 0x0D: /* SetFilter */
+         if (param_count >= 2) {
++            const int changed = filter_file != param_fifo[0] ||
++                                filter_channel != param_fifo[1];
+             filter_file = param_fifo[0];
+             filter_channel = param_fifo[1];
++            if (changed) spu_cd_audio_reset();
+             xa_reset_decode();
+         }
+         response_push(stat_reg);
 diff --git a/runtime/src/gpu.c b/runtime/src/gpu.c
 index c4b80f1..562e49a 100644
 --- a/runtime/src/gpu.c
@@ -350,10 +494,110 @@ index 4ef7357..f6fa042 100644
              cpu->gte_ctrl[reg] = gte_sign_extend_16(val);
              break;
 diff --git a/runtime/src/main.cpp b/runtime/src/main.cpp
-index 9a8215c..2838dee 100644
+index 9a8215c..fd0038d 100644
 --- a/runtime/src/main.cpp
 +++ b/runtime/src/main.cpp
-@@ -10237,8 +10237,6 @@ namespace {
+@@ -1118,6 +1118,7 @@ static int           g_video_screen   = 0;  /* 0=raw,1=crt,2=composite,3=trinitr
+ static int           g_video_win_w    = 1280; /* window width (height follows aspect) */
+ static bool          g_audio_spu_hq   = false; /* SPU float-shadow (env overrides) */
+ static int           g_audio_freq     = 44100; /* host device request */
++static int           g_audio_buffer_ms = 180; /* bridge target; game.toml may lower it */
+ static int           g_auto_skip_fmv  = 0;   /* skip FMVs the instant they're detected */
+ static int           g_rewind_depth  = 50;  /* local rewind snap count (50/100/150/200) */
+ static int           g_rewind_interval = 15; /* frames between snaps (1/4/8/12/15) */
+@@ -2845,7 +2846,7 @@ static void sdl_audio_pump(bool discard_output = false) {
+         /* Hand to the bridge (band-limited resample + DRC) instead of
+          * SDL_QueueAudio. Lock guards the SPSC ring against the pull callback.
+          * The T3 tap moves to sdl_drc_callback: what the device actually
+-         * receives is the bridge's device-rate output, not this buffer. */
++        * receives is the bridge's device-rate output, not this buffer. */
+         psx_sdl_audio_lock(sdl_audio_device);
+         rab_push(&s_drc, sdl_audio_buf, frames);
+         psx_sdl_audio_unlock(sdl_audio_device);
+@@ -3116,6 +3117,7 @@ static void runtime_perf_diag_tick() {
+     static bool have_last = false;
+     static RuntimePerfSnapshot last;
+     static uint64_t last_spu = 0, last_underruns = 0, last_overflows = 0;
++    static uint64_t last_cd_underflows = 0, last_cd_push = 0;
+     static uint64_t last_up[6] = {0};
+     static uint64_t last_overlay_load_us = 0;
+     if (!g_runtime_perf.enabled) return;
+@@ -3128,6 +3130,8 @@ static void runtime_perf_diag_tick() {
+     RuntimePerfSnapshot current = runtime_perf_snapshot(now);
+     AudioTraceStats audio;
+     audio_trace_get_stats(&audio);
++    SpuDebugInfo spu_info = {};
++    spu_debug_info(&spu_info);
+     double fill_ms = 0.0, target_ms = 0.0, correction = 0.0;
+     uint64_t underruns = 0, overflows = 0;
+     int legacy = 0, host_rate = 0;
+@@ -3144,6 +3148,8 @@ static void runtime_perf_diag_tick() {
+         last_spu = audio.tap_frames[AUDIO_TAP_SPU_OUT];
+         last_underruns = underruns;
+         last_overflows = overflows;
++        last_cd_underflows = spu_info.cd_underflow_frames;
++        last_cd_push = spu_info.cd_push_frames;
+         last_overlay_load_us = overlay_load_us;
+         for (int i = 0; i < 6; i++) last_up[i] = up[i];
+         have_last = true;
+@@ -3154,7 +3160,8 @@ static void runtime_perf_diag_tick() {
+                       (double)g_runtime_perf.frequency;
+     std::fprintf(stdout,
+         "psxrecomp: runtime cadence: guest=%.2f Hz, spu=%.1f Hz, "
+-        "audio_fill=%.1f ms, underruns=+%llu, overflows=+%llu, corr=%+.5f; "
++        "audio_fill=%.1f ms, underruns=+%llu, overflows=+%llu, corr=%+.5f, "
++        "xa_fill=%u xa_push=+%llu xa_underflow=+%llu; "
+         "GL upload=%.1f calls/s %.1f rect/s %.2f Mpix/s, "
+         "cpu=%.1f tex=%.1f draw=%.1f ms/s; "
+         "work guest=%.1f pacer=%.1f autocapture=%.1f provider_poll=%.1f ms/s, "
+@@ -3168,6 +3175,9 @@ static void runtime_perf_diag_tick() {
+         (double)(audio.tap_frames[AUDIO_TAP_SPU_OUT] - last_spu) / dt,
+         fill_ms, (unsigned long long)(underruns - last_underruns),
+         (unsigned long long)(overflows - last_overflows), correction,
++        spu_info.cd_frames,
++        (unsigned long long)(spu_info.cd_push_frames - last_cd_push),
++        (unsigned long long)(spu_info.cd_underflow_frames - last_cd_underflows),
+         (double)(up[0] - last_up[0]) / dt,
+         (double)(up[1] - last_up[1]) / dt,
+         (double)(up[2] - last_up[2]) / dt / 1.0e6,
+@@ -3204,6 +3214,8 @@ static void runtime_perf_diag_tick() {
+     last_spu = audio.tap_frames[AUDIO_TAP_SPU_OUT];
+     last_underruns = underruns;
+     last_overflows = overflows;
++    last_cd_underflows = spu_info.cd_underflow_frames;
++    last_cd_push = spu_info.cd_push_frames;
+     last_overlay_load_us = overlay_load_us;
+     for (int i = 0; i < 6; i++) last_up[i] = up[i];
+ }
+@@ -5433,12 +5445,23 @@ static void depth24_fix_trailing_margin(uint32_t *buf, uint32_t w, uint32_t h,
+         return;
+     }
+ 
+-    /* Default: last 8 columns. If the upload span is known and ends earlier
+-     * inside that margin, start blanking from the span edge instead. */
++    /* Default: last 8 columns (upload span unknown — lim==0 — stay
++     * conservative). If the span is known, trust it fully: narrow the
++     * margin when it ends earlier, but also WIDEN start to w (blank
++     * nothing) when it confirms full coverage. The old code only ever
++     * narrowed, so a confirmed-complete upload (lim >= w) still fell
++     * through to the unconditional 8px default — painting a permanent
++     * black column over real, valid pixels on every depth24 frame whose
++     * uploads happen to cover the full width (e.g. Einhander's intro FMV),
++     * not just MotK's genuinely-partial crawl this margin was written for. */
+     uint32_t start = w - 8u;
+     uint32_t lim = gpu_depth24_rgb_limit(display_x, w);
+-    if (lim > 0u && lim < w && lim < start)
+-        start = lim;
++    if (lim > 0u) {
++        if (lim >= w)
++            start = w;
++        else if (lim < start)
++            start = lim;
++    }
+     for (uint32_t y = 0; y < h; y++) {
+         for (uint32_t x = start; x < w; x++)
+             buf[y * w + x] = 0xFF000000u;
+@@ -10237,8 +10260,6 @@ namespace {
          int resume_netplay_room)
      {
          if (!gi) return;
@@ -362,7 +606,7 @@ index 9a8215c..2838dee 100644
          launcher_profile_apply("psx", gi);
          gi->name = game_name_c;
          gi->region = region_c;
-@@ -10248,9 +10246,9 @@ namespace {
+@@ -10248,9 +10269,9 @@ namespace {
              g_rui_config_ini_path.empty() ? nullptr : g_rui_config_ini_path.c_str();
          gi->has_expected_crc = 0;
          gi->num_known_sha256 = 0;
@@ -375,7 +619,7 @@ index 9a8215c..2838dee 100644
          gi->num_players = game_players_n;
          gi->msu1_supported = 0;
          gi->sram_path = nullptr;
-@@ -10258,7 +10256,9 @@ namespace {
+@@ -10258,7 +10279,9 @@ namespace {
          gi->pad_mode_selectable = ctrl_lock_mode_b ? 0 : 1;
          gi->locked_pad_mode = locked_pad_mode_i;
          gi->lock_device = ctrl_lock_device_b ? 1 : 0;
@@ -386,7 +630,7 @@ index 9a8215c..2838dee 100644
          gi->renderer_labels = kPsxRendererLabels;
          gi->num_renderers = vulkan_offered_b ? 3 : 2;
          gi->settings_bindings = 1;
-@@ -10315,7 +10315,7 @@ int main(int argc, char** argv) {
+@@ -10315,7 +10338,7 @@ int main(int argc, char** argv) {
  
      /* Setup-host zip-root exe: after Generate & rebuild, hand off to the
       * product binary under build-release/ (bios/, mods/, assets/, settings). */
@@ -395,7 +639,7 @@ index 9a8215c..2838dee 100644
      psx_game_codegen_forward_if_built(argc, argv);
  #endif
  
-@@ -10493,12 +10493,10 @@ int main(int argc, char** argv) {
+@@ -10493,12 +10516,10 @@ int main(int argc, char** argv) {
      }
      bool ctrl_lock_mode    = false; /* game.toml [controller] lock_mode; true hides the whole pad-mode selector */
      bool ctrl_lock_device  = false; /* game.toml [controller] lock_device; true hides the Player controller cards entirely */
@@ -412,7 +656,7 @@ index 9a8215c..2838dee 100644
      constexpr bool frame_interpolation_offered = false;
      constexpr bool skip_fmv_offered = false;
      /* Load acceleration is likewise mod-owned (Fast Loading / CD Speed). The
-@@ -10557,6 +10555,8 @@ int main(int argc, char** argv) {
+@@ -10557,6 +10578,8 @@ int main(int argc, char** argv) {
              game_id   = gc.id;
              game_region = gc.region;
              game_players = gc.players;
@@ -421,6 +665,190 @@ index 9a8215c..2838dee 100644
              /* CTR ND intro: an older workaround (PSX_ND_SIB_FLAP_LAST=1) skipped
               * wide additive 0x36 in OT ranks 1600..2099 to unmask sibling flaps.
               * After the AVSZ3 MAC0 fix (unshifted product → correct MAC0>>17 OT
+@@ -10821,6 +10844,7 @@ int main(int argc, char** argv) {
+                 psx_ws_set_backdrop_sites(gc.ws_backdrop_x_sites.data(),
+                                           (int)gc.ws_backdrop_x_sites.size());
+             g_audio_spu_hq     = gc.runtime.audio_spu_hq;
++            g_audio_buffer_ms  = gc.runtime.audio_buffer_ms;
+             g_auto_skip_fmv    = gc.runtime.video_auto_skip_fmv ? 1 : 0;
+             /* [controller] game-declared input defaults (settings.toml/launcher
+              * still override below). */
+@@ -12666,7 +12690,10 @@ session_reboot:
+         want.freq = g_audio_freq;
+         want.format = AUDIO_S16SYS;
+         want.channels = 2;
+-        want.samples = 1024;
++        /* A 256-frame callback is ~5.8 ms at 44.1 kHz.  The former 1024-frame
++         * callback alone represented ~23 ms and made low-latency game profiles
++         * impossible even with a short bridge target. */
++        want.samples = 256;
+         const bool legacy = audio_legacy_mode();
+         want.allow_frequency_change = legacy ? 0 : 1;
+         if (!legacy)
+@@ -12678,6 +12705,22 @@ session_reboot:
+                 cfg.channels    = 2;
+                 cfg.source_rate = 44100.0;            /* SPU render rate */
+                 cfg.host_rate   = (double)have.freq;  /* actual device rate */
++                cfg.target_ms   = (double)std::max(30, g_audio_buffer_ms);
++                /* Keep enough recovery room without turning the ring into a
++                 * second large latency reservoir. The +40 ms floor (rare
++                 * under the 180/280 ecosystem defaults) left only 45 ms of
++                 * headroom at Einhander's 30 ms low-latency profile — well
++                 * under the ~140 ms production pause this header's own
++                 * comment documents for streamed/FMV stage transitions.
++                 * That underprovisioned headroom was measured overflowing
++                 * the ring hundreds of times per second during CD-XA FMV
++                 * playback (audio_stats overflow_drops), heard as the
++                 * intro movie's crackle/micro-cuts. +100 ms matches the
++                 * headroom the ecosystem defaults already validate. */
++                cfg.ring_ms     = std::max(cfg.target_ms + 100.0,
++                                           cfg.target_ms * 2.5);
++                cfg.em_low_ms   = std::min(12.0, cfg.target_ms * 0.35);
++                cfg.em_high_ms  = cfg.ring_ms - 20.0;
+                 if (rab_init(&s_drc, &cfg) == 0) s_drc_ready = true;
+             }
+             g_audio_host_rate = have.freq;
+diff --git a/runtime/src/spu.c b/runtime/src/spu.c
+index afb5361..6a1bcda 100644
+--- a/runtime/src/spu.c
++++ b/runtime/src/spu.c
+@@ -126,6 +126,29 @@ static uint32_t cd_frame_count;
+ static uint64_t cd_push_frames;
+ static uint64_t cd_overflow_frames;
+ static uint64_t cd_underflow_frames;
++/* XA sectors arrive in bursts while STR/MDEC video is decoded.  A brief late
++ * sector used to switch the CD input from an arbitrary sample straight to
++ * zero and back, creating two discontinuities (the reported FMV crackle).
++ * Keep timing authoritative and conceal only the discontinuity: a 2 ms ramp
++ * adds no buffering/latency and leaves sustained gaps visible as silence. */
++#define SPU_CD_CONCEAL_FRAMES 88u
++/* XA sectors are delivered in bursts among the FMV video sectors.  Four
++ * NTSC vblanks can elapse between two audio sectors (2940 SPU frames), even
++ * though the long-term rate is exactly 44.1 kHz.  Starting playback after the
++ * very first 2352-frame sector therefore drains the FIFO once per cadence
++ * cycle and repeatedly exercises the conceal/recovery ramp (audible as
++ * crackle).  The physical CD controller has sector buffering; mirror that by
++ * priming through the longest normal delivery gap before consuming. */
++#define SPU_CD_PRIME_FRAMES 2940u
++static int cd_stream_primed;
++static int16_t  cd_last_real_l;
++static int16_t  cd_last_real_r;
++static int16_t  cd_last_out_l;
++static int16_t  cd_last_out_r;
++static int16_t  cd_recover_from_l;
++static int16_t  cd_recover_from_r;
++static uint32_t cd_gap_frames;
++static uint32_t cd_recover_left;
+ 
+ /* ADSR phases — match Beetle's order so cross-process diffs read straight. */
+ #define ADSR_ATTACK   0
+@@ -416,6 +439,12 @@ void spu_cd_audio_reset(void) {
+     cd_push_frames = 0;
+     cd_overflow_frames = 0;
+     cd_underflow_frames = 0;
++    cd_last_real_l = cd_last_real_r = 0;
++    cd_last_out_l = cd_last_out_r = 0;
++    cd_recover_from_l = cd_recover_from_r = 0;
++    cd_gap_frames = 0;
++    cd_recover_left = 0;
++    cd_stream_primed = 0;
+ }
+ 
+ void spu_cd_audio_push(const int16_t* stereo, int frames) {
+@@ -454,11 +483,63 @@ void spu_cd_audio_push(const int16_t* stereo, int frames) {
+ }
+ 
+ static int cd_audio_pop(int16_t* left, int16_t* right) {
+-    if (cd_frame_count == 0) return 0;
+-    *left = cd_ring[cd_read_pos * 2u + 0u];
+-    *right = cd_ring[cd_read_pos * 2u + 1u];
++    if (!cd_stream_primed) {
++        if (cd_frame_count < SPU_CD_PRIME_FRAMES) {
++            *left = 0;
++            *right = 0;
++            return 0;
++        }
++        cd_stream_primed = 1;
++        cd_gap_frames = 0;
++        cd_recover_left = 0;
++        cd_last_real_l = cd_last_real_r = 0;
++        cd_last_out_l = cd_last_out_r = 0;
++    }
++    if (cd_frame_count == 0) {
++        uint32_t remain = cd_gap_frames < SPU_CD_CONCEAL_FRAMES
++                            ? SPU_CD_CONCEAL_FRAMES - cd_gap_frames : 0u;
++        *left = (int16_t)(((int32_t)cd_last_real_l * (int32_t)remain) /
++                          (int32_t)SPU_CD_CONCEAL_FRAMES);
++        *right = (int16_t)(((int32_t)cd_last_real_r * (int32_t)remain) /
++                           (int32_t)SPU_CD_CONCEAL_FRAMES);
++        cd_last_out_l = *left;
++        cd_last_out_r = *right;
++        if (cd_gap_frames < SPU_CD_CONCEAL_FRAMES) cd_gap_frames++;
++        /* A genuine starvation should not chatter between concealment and
++         * recovery on every late sector.  Re-prime a stable reserve first. */
++        cd_stream_primed = 0;
++        return 0;
++    }
++    int16_t real_l = cd_ring[cd_read_pos * 2u + 0u];
++    int16_t real_r = cd_ring[cd_read_pos * 2u + 1u];
+     cd_read_pos = (cd_read_pos + 1u) % SPU_CD_RING_FRAMES;
+     cd_frame_count--;
++
++    if (cd_gap_frames) {
++        cd_recover_from_l = cd_last_out_l;
++        cd_recover_from_r = cd_last_out_r;
++        cd_recover_left = SPU_CD_CONCEAL_FRAMES;
++        cd_gap_frames = 0;
++    }
++    if (cd_recover_left) {
++        uint32_t progressed = SPU_CD_CONCEAL_FRAMES - cd_recover_left + 1u;
++        *left = (int16_t)(((int32_t)cd_recover_from_l *
++                           (int32_t)(SPU_CD_CONCEAL_FRAMES - progressed) +
++                           (int32_t)real_l * (int32_t)progressed) /
++                          (int32_t)SPU_CD_CONCEAL_FRAMES);
++        *right = (int16_t)(((int32_t)cd_recover_from_r *
++                            (int32_t)(SPU_CD_CONCEAL_FRAMES - progressed) +
++                            (int32_t)real_r * (int32_t)progressed) /
++                           (int32_t)SPU_CD_CONCEAL_FRAMES);
++        cd_recover_left--;
++    } else {
++        *left = real_l;
++        *right = real_r;
++    }
++    cd_last_real_l = real_l;
++    cd_last_real_r = real_r;
++    cd_last_out_l = *left;
++    cd_last_out_r = *right;
+     return 1;
+ }
+ 
+diff --git a/tools/compile_overlays.py b/tools/compile_overlays.py
+index b3f7a3c..a7b2ea0 100644
+--- a/tools/compile_overlays.py
++++ b/tools/compile_overlays.py
+@@ -2059,6 +2059,22 @@ def patch_generated_c(src: str, load_addr: int, size: int) -> str:
+     src = re.sub(r'^void func_([0-9A-Fa-f]{8})\(CPUState\* cpu\)$',
+                  add_export, src, flags=re.MULTILINE)
+ 
++    # A fragment can begin on the successor of a MIPS-I delayed load.  The
++    # full-function emitter then emits the successor writeback but the load's
++    # function-local psx_ldd_* temporary lives outside that fragment.  Older
++    # host compilers happened to accept some affected shards only because the
++    # path was not selected; Clang correctly rejects the undeclared name.
++    # Supply DLL-local storage for only those cross-fragment temporaries.  A
++    # declaration emitted inside a complete function continues to shadow this
++    # fallback, so ordinary in-function load-delay pairs are unchanged.
++    ldd_refs = set(re.findall(r'\bpsx_ldd_([0-9A-Fa-f]{8})\b', src))
++    if ldd_refs:
++        fallback = ''.join(
++            f'static uint32_t psx_ldd_{addr} = 0;  /* cross-fragment load delay */\n'
++            for addr in sorted(ldd_refs))
++        src = src.replace(DISPATCH_PREAMBLE,
++                          DISPATCH_PREAMBLE + fallback, 1)
++
+     return src
+ 
+ 
 diff --git a/tools/debug_client.py b/tools/debug_client.py
 index b6d264c..57342e5 100644
 --- a/tools/debug_client.py
@@ -452,4 +880,3 @@ index b6d264c..57342e5 100644
      elif cmd == "watch":
          if len(args) < 2:
              return None, lambda _: "Usage: watch <addr>"
-
