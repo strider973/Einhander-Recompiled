@@ -36,6 +36,12 @@ fi
 if [[ -f "${ROOT}/game_options.toml" ]]; then
   EXTRA_PROJECT+=(--project-file game_options.toml)
 fi
+# launcher_assets/ (box art etc.) is untracked here (boxart.tga is gitignored)
+# so it doesn't exist in a fresh CI checkout -- package_setup_host.sh's copy_proj
+# hard-errors on a missing --project-dir target. Only pass it when present.
+if [[ -e "${ROOT}/launcher_assets" ]]; then
+  EXTRA_PROJECT+=(--project-dir launcher_assets)
+fi
 
 cd "${ROOT}"
 exec bash "${PACKAGER}" \
@@ -55,5 +61,4 @@ exec bash "${PACKAGER}" \
   --project-file codegen_setup.h \
   --project-file README.md \
   --project-dir seeds \
-  --project-dir launcher_assets \
   "${EXTRA_PROJECT[@]}"
