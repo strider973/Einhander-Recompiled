@@ -547,8 +547,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           # Artifact name uses the title zip prefix (e.g. bpe, motk).
-          name: ein-${{ matrix.artifact }}
-          path: dist/ein-*-${{ matrix.artifact }}.zip
+          name: einhander-${{ matrix.artifact }}
+          path: dist/einhander-*-${{ matrix.artifact }}.zip
           if-no-files-found: error
           retention-days: 30
 
@@ -573,7 +573,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          find artifacts -type f -name 'ein-*.zip' -exec cp -v {} dist/ \;
+          find artifacts -type f -name 'einhander-*.zip' -exec cp -v {} dist/ \;
           ls -la dist/
 
       - name: Ensure release tag exists
@@ -598,7 +598,7 @@ jobs:
           # Quoted: titles may contain ':' (e.g. "Marvel vs. Capcom: …").
           name: "Einhander Recompiled ${{ needs.prepare.outputs.tag }}"
           files: |
-            dist/ein-*.zip
+            dist/einhander-*.zip
           generate_release_notes: true
           fail_on_unmatched_files: true
           target_commitish: ${{ github.sha }}

@@ -21,8 +21,6 @@
 /saves/
 /prepared_disc/
 /disc/
-/launcher_assets/img/boxart.tga
-/toolchain/.psxrecomp-bin
 .settings/
 
 # Disc / image / memcard formats
@@ -68,10 +66,6 @@ psx_last_run_report.json
 psx_screenshot.bmp
 psx_freeze_heartbeat.json
 starvation_dump.jsonl
-*_stdout.txt
-*_stderr.txt
-gp0_trace*.bin
-diag_*.json
 
 # Diagnostic dumps (root-level) — keep catalog / probe trackable
 /*.json
@@ -79,3 +73,6 @@ diag_*.json
 /*.png
 !/catalog_identity.json
 !/disc_probe.json
+steamos_boot_*.txt
+*_boot_err.txt
+*_boot_out.txt

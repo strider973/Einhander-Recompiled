@@ -6,7 +6,7 @@ name = "Einhander"
 id = "SCUS-94243"
 players = 1
 exe = "disc/SCUS_942.43"
-disc = "disc/Einhaender (USA).cue"
+disc = "D:\\PS1RECOMP - CLAUDE\\Einhaender (USA).cue"
 load_address = "0x80010000"
 entry_pc = "0x800155FC"
 text_size = "0x00022000"
@@ -34,19 +34,32 @@ strict = true
 [runtime]
 window_title = "Einhander Recompiled"
 memcard_dir = "saves"
+# Overlays : cache de compilation + backend gcc (comme le projet EinhanderRecomp).
 overlay_cache = true
 overlay_backend = "gcc"
 
 [video]
 renderer = "opengl"
 aspect_ratio = "4:3"
+# Ecran haut rafraichissement (120 Hz) : la vsync piloterait la cadence et
+# ferait tourner tout le jeu a 2x (VBLANK a 120 Hz). "off" rend la cadence
+# au pacer fixe 59,94 Hz.
+vsync = "off"
 
 [widescreen]
 offer = false
 offer_ultrawide = false
 
 [controller]
+# Einhander ne lit pas les sticks -> pad numerique. La DualSense est reconnue
+# automatiquement par SDL (base de mappings integree) : croix directionnelle +
+# boutons PS en 1:1, aucune config par-jeu necessaire.
 default_mode = "digital"
+multitap_analog = true
+
+[audio]
+buffer_ms = 30
+spu_hq = false
 
 # Online mount gate: digests + track count + optional TOC fingerprint
 # (see docs/NETPLAY.md).
@@ -54,8 +67,3 @@ default_mode = "digital"
 require_cue = true
 required_tracks = 1
 required_disc_fp = "65393df4ff611265cd99737df47f6af7c8f6798a1826d805cc31c54c1e8cb637"
-[audio]
-# Low-latency profile: 30 ms bridge target + ~5.8 ms host callback at 44.1 kHz.
-# Canonical SPU output is the fidelity reference for this first public port.
-buffer_ms = 30
-spu_hq = false

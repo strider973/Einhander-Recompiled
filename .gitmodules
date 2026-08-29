@@ -1,8 +1,8 @@
 [submodule "psxrecomp"]
 	path = psxrecomp
-	url = https://github.com/strider973/psxrecomp.git
-	branch = strider2-fixes
+	url = https://github.com/mstan/psxrecomp.git
+	branch = master
 [submodule "recomp-ui"]
 	path = recomp-ui
-	url = https://github.com/strider973/recomp-ui.git
-	branch = strider2-fixes
+	url = https://github.com/mstan/recomp-ui.git
+	branch = master

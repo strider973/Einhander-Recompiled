@@ -5,7 +5,7 @@
 # Usage:
 #   scripts/package_setup_release.sh <build-dir> <artifact-tag> [recompiler-build-dir]
 #
-# Writes: dist/ein-<VERSION>-<artifact-tag>.zip
+# Writes: dist/einhander-<VERSION>-<artifact-tag>.zip
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,18 +36,13 @@ fi
 if [[ -f "${ROOT}/game_options.toml" ]]; then
   EXTRA_PROJECT+=(--project-file game_options.toml)
 fi
-# launcher_assets/ (box art etc.) is untracked here (boxart.tga is gitignored)
-# so it doesn't exist in a fresh CI checkout -- only ship it when present.
-if [[ -e "${ROOT}/launcher_assets" ]]; then
-  EXTRA_PROJECT+=(--project-dir launcher_assets)
-fi
 
 cd "${ROOT}"
 exec bash "${PACKAGER}" \
   --root "${ROOT}" \
   --build-dir "${BUILD_DIR}" \
   --artifact "${ARTIFACT_TAG}" \
-  --zip-prefix ein \
+  --zip-prefix einhander \
   --exe-name Einhander_Recompiled \
   --display-name "Einhander Recompiled" \
   --recompiler-build "${RECOMPILER_BUILD}" \
@@ -60,4 +55,5 @@ exec bash "${PACKAGER}" \
   --project-file codegen_setup.h \
   --project-file README.md \
   --project-dir seeds \
+  --project-dir launcher_assets \
   "${EXTRA_PROJECT[@]}"

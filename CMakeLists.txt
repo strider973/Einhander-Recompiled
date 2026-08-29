@@ -5,28 +5,26 @@ set(PSXRECOMP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/psxrecomp" CACHE PATH
     "Path to psxrecomp")
 
 # --- Opt-in product surfaces (OFF by default in the framework) -------------
-# Scaffold prompts / flags fill these. Einhander uses the official recomp-ui
-# launcher so keyboard, controller and video settings live in one place.
+# Scaffold prompts / flags fill these. Without recomp-ui, PSX_RECOMP_UI is OFF.
 # Setup-host CI requires WIZARD_CMAKE_BLOCK / ENABLE_SETUP_WIZARD (FORCE_SETUP_HOST
 # alone does not open first-run / Generate & rebuild).
-set(PSX_RECOMP_UI ON CACHE BOOL
-    "Build the unified recomp-ui launcher" FORCE)
+# recomp-ui submodule present (PSX_RECOMP_UI defaults ON).
 # Full netplay UI -- enable after adding recomp-ui + testing:
 # if(EXISTS "${PSXRECOMP_ROOT}/lib/recomp-net/CMakeLists.txt")
 #     set(PSX_NETPLAY ON CACHE BOOL "..." FORCE)
 # endif()
-# First-run setup wizard -- enable after testing:
-# set(PSX_SETUP_WIZARD ON CACHE BOOL "..." FORCE)
+set(PSX_SETUP_WIZARD ON CACHE BOOL
+    "Advertise first-run setup wizard + Generate & rebuild in recomp-ui" FORCE)
 include("${PSXRECOMP_ROOT}/runtime/runtime.cmake")
 
 psxrecomp_add_game_runtime(psx-runtime
     # ENABLE_NETPLAY_IF_PRESENT
-    # NETPLAY_LOBBY_URL "ws://netplay.retcomm.net:8765"
-    # ENABLE_SETUP_WIZARD
+    # NETPLAY_LOBBY_URL ws://netplay.retcomm.net:8765
+    ENABLE_SETUP_WIZARD
     WINDOW_TITLE "Einhander Recompiled"
     DEFAULT_GAME_CONFIG_PATH "game.toml"
     MAX_PLAYERS 1
-    LAUNCHER_BOXART "${CMAKE_CURRENT_SOURCE_DIR}/launcher_assets/img/boxart.tga"
+    # LAUNCHER_BOXART "${CMAKE_CURRENT_SOURCE_DIR}/launcher_assets/img/boxart.tga"
     APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/psxrecomp.ico"
     GEN_MARKER "generated/SCUS_942.43_dispatch.c"
     GEN_FULL_GLOB "generated/SCUS_942.43_full_*.c"
